@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="rw">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 Live Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f4f8;
+      color: #222;
+    }
+
+    header {
+      background: #0f6e56;
+      color: white;
+      padding: 16px 24px;
+    }
+    header h1 { font-size: 20px; }
+    header p  { font-size: 13px; opacity: 0.8; margin-top: 4px; }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      margin: 10px 24px;
+    }
+    .online  { background: #e1f5ee; color: #0f6e56; }
+    .offline { background: #fcebeb; color: #a32d2d; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 20px 24px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px 16px;
+      text-align: center;
+      border: 1px solid #e0e0e0;
+    }
+    .card .lbl { font-size: 13px; color: #888; margin-bottom: 8px; }
+    .card .val { font-size: 48px; font-weight: bold; line-height: 1; }
+    .card .unit { font-size: 16px; color: #888; margin-top: 6px; }
+    .card .time { font-size: 11px; color: #bbb; margin-top: 8px; }
+
+    .temp { color: #D85A30; }
+    .hum  { color: #185FA5; }
+
+    .chart-box {
+      background: white;
+      border-radius: 12px;
+      border: 1px solid #e0e0e0;
+      padding: 16px 20px;
+      max-width: 640px;
+      margin: 0 auto 24px;
+    }
+    .chart-box h3 {
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 12px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      max-width: 640px;
+      margin: 0 auto 20px;
+      padding: 0 24px;
+    }
+    .stat {
+      background: white;
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+      border: 1px solid #e0e0e0;
+    }
+    .stat .s-lbl { font-size: 11px; color: #999; margin-bottom: 4px; }
+    .stat .s-val { font-size: 18px; font-weight: bold; color: #333; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🌡 ESP32 + DHT22 — Live Dashboard</h1>
+  <p>Data store in PlanetScale alyways updated 10 sec</p>
+</header>
+
+<div>
+  <span class="badge offline" id="badge">⏳ connected...</span>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="lbl">Temperature</div>
+    <div class="val temp" id="cur-temp">--</div>
+    <div class="unit">°C</div>
+    <div class="time" id="cur-time">--</div>
+  </div>
+  <div class="card">
+    <div class="lbl">Humidity</div>
+    <div class="val hum" id="cur-hum">--</div>
+    <div class="unit">%</div>
+    <div class="time">auto-refresh</div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="s-lbl">Temp max</div>
+    <div class="s-val temp" id="t-max">--</div>
+  </div>
+  <div class="stat">
+    <div class="s-lbl">Temp min</div>
+    <div class="s-val temp" id="t-min">--</div>
+  </div>
+  <div class="stat">
+    <div class="s-lbl">Hum max</div>
+    <div class="s-val hum" id="h-max">--</div>
+  </div>
+  <div class="stat">
+    <div class="s-lbl">Hum min</div>
+    <div class="s-val hum" id="h-min">--</div>
+  </div>
+</div>
+
+<div class="chart-box">
+  <h3>📈 History (readings 60 )</h3>
+  <canvas id="chart" height="120"></canvas>
+</div>
+
+<script>
+  
+  const API = 'https://esp32-backend-ihzd.onrender.com';
+
+  let chart = null;
+
+  async function loadData() {
+    try {
+      const [latest, history] = await Promise.all([
+        fetch(API + '/api/latest').then(r => r.json()),
+        fetch(API + '/api/history?limit=60').then(r => r.json())
+      ]);
+
+      
+      if (latest.temperature !== undefined) {
+        document.getElementById('cur-temp').textContent =
+          parseFloat(latest.temperature).toFixed(1);
+        document.getElementById('cur-hum').textContent =
+          parseFloat(latest.humidity).toFixed(0);
+        document.getElementById('cur-time').textContent =
+          'Ivugururwa: ' + new Date(latest.recorded_at).toLocaleTimeString();
+
+        const badge = document.getElementById('badge');
+        badge.textContent = '🟢 Live';
+        badge.className = 'badge online';
+      }
+
+      
+      if (history.length > 0) {
+        const temps = history.map(r => parseFloat(r.temperature));
+        const hums  = history.map(r => parseFloat(r.humidity));
+
+        document.getElementById('t-max').textContent =
+          Math.max(...temps).toFixed(1) + '°';
+        document.getElementById('t-min').textContent =
+          Math.min(...temps).toFixed(1) + '°';
+        document.getElementById('h-max').textContent =
+          Math.max(...hums).toFixed(0) + '%';
+        document.getElementById('h-min').textContent =
+          Math.min(...hums).toFixed(0) + '%';
+
+        // Graph
+        const labels = history.map(r =>
+          new Date(r.recorded_at).toLocaleTimeString()
+        );
+
+        if (!chart) {
+          chart = new Chart(
+            document.getElementById('chart').getContext('2d'),
+            {
+              type: 'line',
+              data: {
+                labels,
+                datasets: [
+                  {
+                    label: 'Temp (°C)',
+                    data: temps,
+                    borderColor: '#D85A30',
+                    backgroundColor: 'rgba(216,90,48,0.07)',
+                    tension: 0.4,
+                    pointRadius: 2,
+                    borderWidth: 2
+                  },
+                  {
+                    label: 'Humidity (%)',
+                    data: hums,
+                    borderColor: '#185FA5',
+                    backgroundColor: 'rgba(24,95,165,0.07)',
+                    tension: 0.4,
+                    pointRadius: 2,
+                    borderWidth: 2
+                  }
+                ]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  legend: { labels: { font: { size: 12 } } }
+                },
+                scales: {
+                  x: { ticks: { font: { size: 10 }, maxTicksLimit: 8 } },
+                  y: { ticks: { font: { size: 10 } } }
+                }
+              }
+            }
+          );
+        } else {
+          chart.data.labels = labels;
+          chart.data.datasets[0].data = temps;
+          chart.data.datasets[1].data = hums;
+          chart.update();
+        }
+      }
+
+    } catch (err) {
+      const badge = document.getElementById('badge');
+      badge.textContent = '🔴 Server ntishoboka';
+      badge.className = 'badge offline';
+    }
+  }
+
+  loadData();
+  setInterval(loadData, 10000);
+</script>
+
+</body>
+</html>
